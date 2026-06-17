@@ -16,6 +16,24 @@ printf '%s' "$SECRET" | npx touchid-keychain set -s my-app API_KEY
 npx touchid-keychain get -s my-app API_KEY
 ```
 
+### Compose it into other commands
+
+`run` fetches one secret (a single Touch ID prompt), exports it into the
+environment, then execs whatever follows `--`. Because npm/bun put
+`node_modules/.bin` on `PATH` inside scripts, your `package.json` stays a clean
+one-liner — no wrapper script, no `node_modules/.bin/` path:
+
+```jsonc
+// package.json
+"scripts": {
+  "dev": "touchid-keychain run -s my-app DOTENV_PRIVATE_KEY -- dotenvx run -- next dev"
+}
+```
+
+The secret is exported as the account name by default; use `--as VAR` to rename
+it. If the Touch ID prompt is denied, `run` exits non-zero and the command never
+starts.
+
 ## Install
 
 ```bash

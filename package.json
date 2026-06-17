@@ -1,6 +1,6 @@
 {
   "name": "touchid-keychain",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Store and retrieve secrets in the macOS login Keychain, gated by Touch ID. No Apple Developer cert required.",
   "type": "module",
   "main": "index.js",
