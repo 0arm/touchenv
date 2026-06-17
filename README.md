@@ -1,125 +1,74 @@
-# touchid-keychain
+# touchenv
 
-Store and retrieve secrets in the **macOS login Keychain, gated by Touch ID** — from Node or the command line. **No Apple Developer cert required.**
-
-```js
-import { Keychain } from 'touchid-keychain'
-
-const kc = new Keychain({ service: 'my-app' })
-
-await kc.set('API_KEY', 'super-secret')   // Touch ID prompt
-const key = await kc.get('API_KEY')       // Touch ID prompt
-```
+Keychain-aware [dotenvx](https://dotenvx.com) for macOS: decrypt your `.env` with the dotenvx private key stored behind **Touch ID** instead of sitting in a plaintext `.env.keys` on disk. **No Apple Developer cert required**, and it's a plain dotenvx passthrough off macOS so it never breaks CI/Linux builds.
 
 ```bash
-printf '%s' "$SECRET" | npx touchid-keychain set -s my-app API_KEY
-npx touchid-keychain get -s my-app API_KEY
-```
-
-### Compose it into other commands
-
-`run` fetches one secret (a single Touch ID prompt), exports it into the
-environment, then execs whatever follows `--`. Because npm/bun put
-`node_modules/.bin` on `PATH` inside scripts, your `package.json` stays a clean
-one-liner — no wrapper script, no `node_modules/.bin/` path:
-
-```jsonc
-// package.json
-"scripts": {
-  "dev": "touchid-keychain run -s my-app DOTENV_PRIVATE_KEY -- dotenvx run -- next dev"
-}
-```
-
-The secret is exported as the account name by default; use `--as VAR` to rename
-it. If the Touch ID prompt is denied, `run` exits non-zero and the command never
-starts.
-
-**Make it opt-in** with `--gate <ENV>`: the keychain is only touched when `<ENV>`
-is truthy (`true`/`1`/`yes`/`on`), checked in the environment first and then in
-`.env.local` / `.env`. Otherwise the command runs unchanged, with no prompt — so
-a teammate who hasn't opted in is unaffected:
-
-```jsonc
-"dev": "touchid-keychain run -s my-app DOTENV_PRIVATE_KEY --gate USE_KEYCHAIN -- dotenvx run -- next dev"
+touchenv run --convention=nextjs -- next dev   # Touch ID, then dotenvx run …
+touchenv decrypt                               # any dotenvx command works
 ```
 
 ## Install
 
 ```bash
-npm install github:0arm/touchid-keychain
+npm install github:0arm/touchenv      # or: bun add github:0arm/touchenv
+npm install -g github:0arm/touchenv   # global, use `touchenv` anywhere
 ```
 
-Installs on **any platform** — the Swift helper compiles lazily on first use, so nothing native runs at install time. The **keychain features** require **macOS** with a Touch ID sensor and the **Xcode Command Line Tools** (`xcode-select --install`); the compiled helper is cached under `~/.cache/touchid-keychain/`. On other platforms `touchenv` is a plain dotenvx passthrough (see below).
+Installs on **any platform** — the Swift helper compiles lazily on first use, so nothing native runs at install time. The keychain features need **macOS** with Touch ID and the **Xcode Command Line Tools** (`xcode-select --install`).
 
-## `touchenv` — keychain-aware dotenvx
+## How `touchenv` works
 
-The package also ships a `touchenv` bin: a thin front end that forwards every
-argument to the real `dotenvx`, but first injects `DOTENV_PRIVATE_KEY` from the
-Keychain (one Touch ID prompt) when opted in. dotenvx stays vanilla — no fork.
+`touchenv <args…>` forwards everything to the real `dotenvx` (project-local if present, else on `PATH`). Before doing so, *when opted in*, it fetches `DOTENV_PRIVATE_KEY` from the macOS Keychain behind a Touch ID prompt and exports it, so dotenvx decrypts with it.
 
-```bash
-touchenv decrypt
-touchenv run --convention=nextjs -- next dev
-```
-
-Install it globally and it works in any project:
-
-```bash
-bun add -g github:0arm/touchid-keychain
-```
-
-Zero config by convention — `service` = `"<package-name>-dotenv"`, `account` =
-`DOTENV_PRIVATE_KEY`, opt-in gate = `DOTENV_USE_KEYCHAIN`. When the gate isn't
-truthy, `touchenv` is a transparent passthrough to dotenvx (no prompt), so it's
-safe in a shared `package.json`. Override any default per project:
+- **Opt-in** via a gate env var (default `DOTENV_USE_KEYCHAIN`), checked in the environment then `.env.local` / `.env`. Not truthy → no prompt, plain passthrough.
+- **Non-macOS** → keychain skipped entirely, plain passthrough. Safe on Vercel/Linux (dotenvx uses its normal key resolution — e.g. a `DOTENV_PRIVATE_KEY` env var).
+- **Zero config by convention** — `service` = `"<package-name>-dotenv"`, `account` = `DOTENV_PRIVATE_KEY`, `gate` = `DOTENV_USE_KEYCHAIN`. Override per project in `package.json`:
 
 ```jsonc
-// package.json
-"touchid-keychain": { "service": "my-svc", "account": "DOTENV_PRIVATE_KEY", "gate": "USE_KEYCHAIN" }
+"touchenv": { "service": "my-svc", "account": "DOTENV_PRIVATE_KEY", "gate": "USE_KEYCHAIN" }
 ```
 
-It runs the project-local `dotenvx` if present, else one on `PATH`.
+A typical `package.json`:
 
-**Cross-platform:** the package installs everywhere (the Swift helper only
-compiles at runtime, on macOS). On non-macOS — Linux, CI, Vercel — `touchenv` is
-a plain dotenvx passthrough with no keychain involvement, so it never breaks a
-build; dotenvx just uses its normal key resolution.
+```jsonc
+"scripts": {
+  "dev": "touchenv run --convention=nextjs -- next dev",
+  "build": "touchenv run -- next build"
+}
+```
 
-## How it works (and what it does / doesn't protect)
+## Seeding the keychain
 
-macOS's built-in `security` CLI can store and read Keychain items but **cannot gate them on Touch ID** — biometric-gated items live in the *data-protection keychain*, which requires a provisioning-profile'd app bundle a bare CLI can't be.
+Use the `keychain` subcommand for raw access (no dotenvx involved):
 
-So this uses the **legacy keychain + the trusted-application ACL** instead:
+```bash
+# store the dotenvx private key (read it out of .env.keys, then drop it from there)
+grep '^DOTENV_PRIVATE_KEY=' .env.keys | cut -d= -f2- | touchenv keychain set -s my-app-dotenv DOTENV_PRIVATE_KEY
 
-- A small Swift helper creates the item, so its default ACL **trusts only that helper's code identity**. `security find-generic-password -w` (or any other app) then gets a *deny-able prompt* instead of silently reading the secret.
-- The helper runs a `LocalAuthentication` (Touch ID) check before it reads, and items are stored `WhenUnlockedThisDeviceOnly` (never synced to iCloud).
+touchenv keychain get -s my-app-dotenv DOTENV_PRIVATE_KEY
+```
 
-**Honest threat model:** this is *user-presence* protection, not an unbypassable vault. A process running as you can still invoke the helper and trigger a Touch ID prompt you'd have to approve — but it can't read the secret silently, and the secret never sits in a plaintext dotfile. For OS-enforced, unbypassable biometric access you need the data-protection keychain (app bundle + paid Developer Program) or a notarized vault like 1Password's `op`.
+`touchenv keychain run -s <service> <account> [--as VAR] [--gate ENV] -- <cmd…>` is the generic primitive `touchenv` is built on: fetch one secret (Touch ID), export it as `VAR`, exec `<cmd>`.
 
-## Signing identity
+## JS API
 
-The helper is code-signed so the Keychain can trust it. `identity` (constructor option) controls how:
+```js
+import { Keychain } from 'touchenv'
 
-| value | behavior |
-|---|---|
-| `'auto'` *(default)* | use an `Apple Development` cert if one exists, else fall back to ad-hoc |
-| `'-'` | force ad-hoc signing |
-| explicit string | use that exact `codesign` identity |
+const kc = new Keychain({ service: 'my-app-dotenv' })
+await kc.set('API_KEY', 'secret')   // Touch ID
+const key = await kc.get('API_KEY') // Touch ID
+```
 
-**With a cert** the helper has a stable identity, so you approve the one-time "Always Allow" keychain prompt once, ever. **Ad-hoc works too** — the only difference is that recompiling the helper changes its code hash, so you'd re-approve "Always Allow" after a rebuild. The build cache keys on the source + identity, so in practice the same binary is reused across rebuilds and projects and the prompt sticks.
+## Security model (honest)
 
-## API
+macOS's built-in `security` CLI can't gate items on Touch ID — biometric items need the data-protection keychain (provisioning-profile'd app bundle). So this uses the **legacy keychain + the trusted-application ACL**: the helper creates the item, so only its code identity is trusted; `security find-generic-password` gets a deny-able prompt instead of silent access, and the helper runs a `LocalAuthentication` check before reading. Items are stored `WhenUnlockedThisDeviceOnly` (never synced to iCloud).
 
-### `new Keychain({ service, identity?, reason? })`
-- `service` *(required)* — namespaces your items.
-- `identity` — see above (default `'auto'`).
-- `reason` — the message shown in the Touch ID prompt.
+This is *user-presence* protection, not an unbypassable vault: a process running as you can still invoke the helper and trigger a prompt you'd have to approve — but it can't read the secret silently, and the key never sits in a plaintext dotfile. For OS-enforced biometric access use the data-protection keychain (paid Developer Program) or a notarized vault like 1Password's `op`.
 
-### `kc.get(account): Promise<string>`
-Prompts Touch ID, resolves the stored secret. Rejects if the item is missing or the prompt is denied.
+### Signing
 
-### `kc.set(account, value): Promise<void>`
-Prompts Touch ID, stores/replaces the secret (passed to the helper via stdin, never argv).
+The helper is code-signed so the keychain can trust it. With an `Apple Development` cert (auto-detected) the identity is stable, so you approve "Always Allow" once. Ad-hoc signing also works — you just re-approve after recompiling the helper. The build cache keys on source + identity, so the same binary is reused across rebuilds and projects.
 
 ## License
 

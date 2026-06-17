@@ -1,17 +1,15 @@
 {
-  "name": "touchid-keychain",
-  "version": "0.5.0",
-  "description": "Store and retrieve secrets in the macOS login Keychain, gated by Touch ID. No Apple Developer cert required. Includes touchenv, a keychain-aware dotenvx front end.",
+  "name": "touchenv",
+  "version": "0.6.0",
+  "description": "Keychain-aware dotenvx for macOS: decrypt your .env with the dotenvx private key stored behind Touch ID. Plain dotenvx passthrough off macOS. No Apple Developer cert required.",
   "type": "module",
   "main": "index.js",
   "exports": "./index.js",
   "bin": {
-    "touchid-keychain": "cli.js",
     "touchenv": "touchenv.js"
   },
   "files": [
     "index.js",
-    "cli.js",
     "touchenv.js",
     "util.js",
     "build.js",
