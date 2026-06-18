@@ -19,11 +19,11 @@ No Apple Developer Program membership is required.
 
 ## Why?
 
-`dotenvx` encrypts your `.env` files, but the private decryption key commonly lives in `.env.keys` on disk.
+`dotenvx` encrypts your `.env` files so you can safely commit them to the repo. Its [whitepaper](https://dotenvx.com/dotenvx.pdf) calls this *cryptographic separation*: an encrypted secrets file that is safe to share, plus a separate private key that does the decryption. The catch is where that private key lives — by default, in plaintext in `.env.keys` on disk.
 
-That is better than committing secrets, but it still means the key exists as plaintext in your project directory.
+That makes the key the single point of failure. Anything that can read a file in your project directory can read it — and with supply-chain attacks and infostealer malware increasingly hunting for exactly these files, a private key sitting in a plaintext dotfile is a prime exfiltration target.
 
-`touchenv` changes the local development flow:
+The whitepaper anticipates this: the runtime pulls the private key from "the `.env.keys` file **or a platform-native secrets manager**." `touchenv` makes the macOS Keychain that platform-native manager — so the key stays out of the plaintext default and behind Touch ID.
 
 ```text
 before: .env.keys on disk
@@ -327,7 +327,7 @@ err.code === 5
 
 ## Security model
 
-`touchenv` stores your `dotenvx` private key in the macOS Keychain and requires Touch ID — or your device password as a fallback — before releasing it to `dotenvx`.
+`touchenv` stores your `dotenvx` private key in the macOS Keychain and requires Touch ID — or your device password as a fallback — before releasing it to `dotenvx`. It is the platform-native key store that dotenvx's [whitepaper](https://dotenvx.com/dotenvx.pdf) names as the alternative to a plaintext `.env.keys`.
 
 This is strong local user-presence protection, not a claim that the secret is impossible to extract from a compromised Mac. An attacker running arbitrary code as your user should not be able to read the key silently, but they may be able to invoke the helper and trigger an authentication prompt. Bypassing the protection should require compromising macOS, the Keychain security model, the helper, or tricking the user into approving access.
 
