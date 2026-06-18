@@ -21,6 +21,8 @@ if (argv[0] === '-h' || argv[0] === '--help') {
   usage(0)
 } else if (argv[0] === 'keychain') {
   await keychainCli(argv.slice(1))
+} else if (argv[0] === 'inject') {
+  await injectCli(argv.slice(1))
 } else {
   await dotenvxProxy(argv)
 }
@@ -43,6 +45,38 @@ async function dotenvxProxy(args) {
 
   const localDotenvx = join(process.cwd(), 'node_modules', '.bin', 'dotenvx')
   forward(existsSync(localDotenvx) ? localDotenvx : 'dotenvx', args, env, 'dotenvx not found (install it in the project or globally)')
+}
+
+// --- inject one keychain secret, then exec an arbitrary command ------------
+
+// touchenv inject [-s <service>] [--as VAR] [--gate ENV] -- <cmd...>
+//
+// Like the bare `touchenv` proxy — service/account/gate resolved from the
+// project's package.json convention, Touch ID gated, macOS-only — but execs
+// <cmd> directly instead of dotenvx. For tools that decrypt the env themselves
+// (e.g. the dotenvx-next Next.js plugin) and only need DOTENV_PRIVATE_KEY
+// present in the environment. Off macOS (CI/Vercel) it's a plain passthrough.
+async function injectCli(args) {
+  const sep = args.indexOf('--')
+  if (sep === -1 || sep === args.length - 1) usage()
+
+  const cfg = resolveConfig()
+  const flags = parseFlags(args.slice(0, sep))
+  const service = flags.service || cfg.service
+  const account = flags.account || cfg.account
+  const gate = flags.gate || cfg.gate
+  const command = args.slice(sep + 1)
+
+  const env = { ...process.env }
+  if (process.platform === 'darwin' && isEnabled(gate)) {
+    try {
+      env[flags.as || account] = await new Keychain({ service }).get(account)
+    } catch (err) {
+      process.stderr.write(`${err.message}\n`)
+      process.exit(1)
+    }
+  }
+  forward(command[0], command.slice(1), env, command[0] + ' not found')
 }
 
 // --- raw keychain access ---------------------------------------------------
@@ -158,6 +192,10 @@ usage:
   touchenv <dotenvx args...>      run dotenvx, injecting DOTENV_PRIVATE_KEY from
                                   the keychain (Touch ID) when opted in via the
                                   gate env var (default DOTENV_USE_KEYCHAIN)
+  touchenv inject [-s <service>] [--as VAR] [--gate ENV] -- <cmd...>
+                                  inject the private key (convention-resolved,
+                                  Touch ID gated, macOS-only) then exec <cmd> —
+                                  for tools that decrypt the env themselves
   touchenv keychain seed [-s <service>] [-a <account>] [--from .env.keys]
                                   store the dotenvx private key from .env.keys
   touchenv keychain get -s <service> <account>
@@ -167,6 +205,7 @@ usage:
 examples:
   touchenv keychain seed          # one-time: .env.keys -> keychain
   touchenv run --convention=nextjs -- next dev
+  touchenv inject -- next build   # key only; plugin/tool does the decrypt
   touchenv decrypt
 `)
   process.exit(code)

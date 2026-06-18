@@ -1,6 +1,6 @@
 {
   "name": "touchenv",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Keychain-aware dotenvx for macOS: decrypt your .env with the dotenvx private key stored behind Touch ID. Plain dotenvx passthrough off macOS. No Apple Developer cert required.",
   "type": "module",
   "main": "index.js",
