@@ -81,7 +81,6 @@ const KEYS_HEADER = [
   '#/------------------!DOTENV_PRIVATE_KEYS!-------------------/',
   '#/ private decryption keys. DO NOT commit to source control /',
   '#/     [how it works](https://dotenvx.com/encryption)       /',
-  '#/          ⛨ ARMORED KEYS: `dotenvx armor up`              /',
   '#/----------------------------------------------------------/',
 ].join('\n')
 

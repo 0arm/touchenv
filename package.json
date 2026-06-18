@@ -1,6 +1,6 @@
 {
   "name": "touchenv",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "Keychain-aware dotenvx for macOS: keep the dotenvx private key in the Keychain behind Touch ID instead of a plaintext .env.keys. Plain dotenvx passthrough off macOS.",
   "type": "module",
   "main": "index.js",
