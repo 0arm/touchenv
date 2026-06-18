@@ -1,132 +1,365 @@
 # touchenv
 
-Store the [dotenvx](https://dotenvx.com) private key in the macOS Keychain, gated by Touch ID, instead of a plaintext `.env.keys` in your project.
+**Touch ID-protected private keys for [dotenvx](https://github.com/dotenvx/dotenvx).**
 
-dotenvx encrypts your `.env` but keeps the decryption key in `.env.keys` on disk. touchenv moves that key into the Keychain and wraps dotenvx, so commands run the same but the key is fetched behind a Touch ID prompt rather than read from a file. Off macOS it forwards to dotenvx untouched, so CI and Linux builds are unaffected.
+`touchenv` keeps your `dotenvx` private key out of plaintext `.env.keys` files and stores it in the macOS Keychain, with access protected by Touch ID.
+
+Use it exactly where you would normally use `dotenvx`:
 
 ```bash
-touchenv run -- next build      # Touch ID, then: dotenvx run -- next build
-touchenv decrypt                # every dotenvx command works the same
+touchenv run -- next build
+touchenv decrypt
+touchenv rotate
 ```
 
-No Apple Developer certificate is required.
+On macOS, `touchenv` fetches the private key only after local user authentication. On Linux, CI, and other non-macOS environments, it passes through to `dotenvx` unchanged.
+
+No Apple Developer Program membership is required.
+
+---
+
+## Why?
+
+`dotenvx` encrypts your `.env` files, but the private decryption key commonly lives in `.env.keys` on disk.
+
+That is better than committing secrets, but it still means the key exists as plaintext in your project directory.
+
+`touchenv` changes the local development flow:
+
+```text
+before: .env.keys on disk
+after:  macOS Keychain + Touch ID
+```
+
+Your commands stay the same. Your key is no longer sitting in a plaintext dotfile.
+
+---
 
 ## Install
 
 ```bash
-npm install touchenv        # or bun add / pnpm add
-npm install -g touchenv     # to use `touchenv` anywhere
+npm install touchenv
 ```
 
-The package installs on any platform; the Swift helper is compiled on first use, not at install time. Keychain features require macOS with Touch ID and the Xcode Command Line Tools (`xcode-select --install`). The passthrough requires `dotenvx` on `PATH` or in the project.
+Or install it globally:
+
+```bash
+npm install -g touchenv
+```
+
+You can also use Bun or pnpm:
+
+```bash
+bun add touchenv
+pnpm add touchenv
+```
+
+The package installs on any platform. The macOS helper is compiled on first use, not during installation.
+
+Keychain support requires:
+
+* macOS
+* Touch ID-capable device
+* Xcode Command Line Tools
+
+Install the command line tools with:
+
+```bash
+xcode-select --install
+```
+
+`touchenv` also expects `dotenvx` to be available either locally in the project or on your `PATH`.
+
+---
 
 ## Quick start
 
-If the project already uses dotenvx (an encrypted `.env` and a `.env.keys`):
+For a project that already uses `dotenvx` and has an encrypted `.env` plus `.env.keys`:
 
 ```bash
-touchenv keychain store                   # .env.keys -> Keychain (Touch ID)
+touchenv keychain store
 echo "DOTENV_USE_KEYCHAIN=true" >> .env.local
-rm .env.keys                              # the key now lives only in the Keychain
-touchenv run -- node server.js            # key is pulled from the Keychain
+rm .env.keys
+touchenv run -- node server.js
 ```
 
-If you haven't encrypted yet, run `touchenv encrypt` first, then store.
+That does four things:
 
-Verify the resolved configuration without a prompt:
+1. Stores the dotenvx private key in the macOS Keychain
+2. Enables Keychain mode locally
+3. Removes the plaintext `.env.keys` file
+4. Runs your app with the key injected after Touch ID approval
+
+Check the setup without triggering a Touch ID prompt:
 
 ```bash
 touchenv keychain status
-# service:  myapp-dotenv
-# account:  DOTENV_PRIVATE_KEY
-# gate:     DOTENV_USE_KEYCHAIN (enabled)
-# stored:   yes
 ```
+
+Example output:
+
+```text
+service:  myapp-dotenv
+account:  DOTENV_PRIVATE_KEY
+gate:     DOTENV_USE_KEYCHAIN enabled
+stored:   yes
+```
+
+If you have not encrypted your `.env` yet, encrypt first:
+
+```bash
+touchenv encrypt
+touchenv keychain store
+echo "DOTENV_USE_KEYCHAIN=true" >> .env.local
+rm .env.keys
+```
+
+---
 
 ## Usage
 
-Call `touchenv` wherever you'd call `dotenvx`:
+Use `touchenv` anywhere you would normally use `dotenvx`.
 
 ```jsonc
-"scripts": {
-  "dev":   "touchenv run --convention=nextjs -- next dev",
-  "build": "touchenv run -- next build",
-  "start": "touchenv run -- node dist/server.js"
+{
+  "scripts": {
+    "dev": "touchenv run --convention=nextjs -- next dev",
+    "build": "touchenv run -- next build",
+    "start": "touchenv run -- node dist/server.js"
+  }
 }
 ```
 
-The first command in a session prompts Touch ID. With a stable signing identity you can approve "Always Allow" once. Any dotenvx subcommand is forwarded:
+The first protected command prompts for Touch ID. After approval, `touchenv` reads the private key from the Keychain and injects it into the environment before forwarding the command to `dotenvx`.
+
+All normal dotenvx commands still work:
 
 ```bash
 touchenv set STRIPE_KEY sk_live_123
 touchenv get STRIPE_KEY
 touchenv ls
+touchenv decrypt
 ```
 
-## Managing the key
+---
 
-The `keychain` group operates on the stored key. Service and account default by convention, so flags are rarely needed.
+## Managing the stored key
+
+The `keychain` commands manage the dotenvx private key stored on your Mac.
 
 ```bash
-touchenv keychain store         # .env.keys -> Keychain (Touch ID)
-touchenv keychain export        # Keychain -> .env.keys (Touch ID), for recovery or migration
-touchenv keychain status        # configuration and whether the keys are stored (no prompt)
-touchenv keychain rm            # remove the stored keys (Touch ID / device password) — destructive
+touchenv keychain store
+touchenv keychain export
+touchenv keychain status
+touchenv keychain rm
 ```
 
-Each accepts `-s, --service <name>` and `-a, --account <name>`. `store` takes `--from <file>` and `export` takes `--to <file>` (default `.env.keys`); `export` refuses to overwrite an existing file unless you pass `--force`. Raw single-value reads and writes live in the JavaScript API below.
-
-### Rotating keys
-
-`dotenvx rotate` generates a fresh keypair, re-encrypts `.env`, and writes the new private key to `.env.keys`. With the key in the Keychain there is no `.env.keys` on disk, so bring it down, rotate, push the new key back, and remove the plaintext:
+### Commands
 
 ```bash
-touchenv keychain export                  # Keychain -> .env.keys (Touch ID)
-touchenv rotate                           # re-encrypt .env, write the new key to .env.keys
-touchenv keychain store --from .env.keys  # new key -> Keychain (Touch ID), replaces the old
-rm .env.keys                              # the new key now lives only in the Keychain
+touchenv keychain store
 ```
 
-Commit the re-encrypted `.env`. To rotate a single env file, pass it through: `touchenv rotate -f .env.production`.
+Reads `.env.keys` and stores the private key in the macOS Keychain.
 
-## Behavior
+```bash
+touchenv keychain export
+```
 
-`touchenv <args>` forwards to `dotenvx`. Before forwarding, when the gate is set, it reads `DOTENV_PRIVATE_KEY` from the Keychain behind a Touch ID prompt and injects it into the environment.
+Writes the stored key back to `.env.keys`. This is useful for recovery, migration, or key rotation.
 
-- Gating: the gate variable (default `DOTENV_USE_KEYCHAIN`) is read from the environment, then `.env.local`, then `.env`. If it is not truthy, touchenv is a plain passthrough with no prompt.
-- Off macOS: the Keychain is skipped. dotenvx uses its normal resolution, which is a `DOTENV_PRIVATE_KEY` environment variable.
-- Convention: `service` is `<package-name>-dotenv`, `account` is `DOTENV_PRIVATE_KEY`, `gate` is `DOTENV_USE_KEYCHAIN`. Override in `package.json`:
+```bash
+touchenv keychain status
+```
+
+Shows the resolved configuration and whether a key is stored. This does not require Touch ID.
+
+```bash
+touchenv keychain rm
+```
+
+Deletes the stored key from the Keychain. This is destructive.
+
+### Options
+
+The default service and account are derived from your project:
+
+```text
+service: <package-name>-dotenv
+account: DOTENV_PRIVATE_KEY
+gate:    DOTENV_USE_KEYCHAIN
+```
+
+You can override them with flags:
+
+```bash
+touchenv keychain store --service my-svc --account DOTENV_PRIVATE_KEY
+touchenv keychain export --to .env.keys
+touchenv keychain export --force
+```
+
+Supported flags:
+
+```bash
+-s, --service <name>
+-a, --account <name>
+--from <file>
+--to <file>
+--force
+```
+
+`export` refuses to overwrite an existing file unless `--force` is passed.
+
+---
+
+## Rotating keys
+
+`dotenvx rotate` creates a new keypair, re-encrypts your `.env`, and writes the new private key to `.env.keys`.
+
+Because `touchenv` removes `.env.keys` from normal local development, rotation is a short export-rotate-store flow:
+
+```bash
+touchenv keychain export
+touchenv rotate
+touchenv keychain store --from .env.keys
+rm .env.keys
+```
+
+Then commit the re-encrypted `.env`.
+
+To rotate a specific env file, pass the dotenvx flags through:
+
+```bash
+touchenv rotate -f .env.production
+```
+
+---
+
+## How it works
+
+`touchenv <args>` forwards to `dotenvx <args>`.
+
+Before forwarding, `touchenv` checks whether Keychain mode is enabled. By default, this is controlled by:
+
+```text
+DOTENV_USE_KEYCHAIN=true
+```
+
+The gate is resolved from:
+
+1. The current environment
+2. `.env.local`
+3. `.env`
+
+When the gate is enabled on macOS, `touchenv` asks the helper to read `DOTENV_PRIVATE_KEY` from the Keychain. The helper performs a Touch ID authentication check first. If authentication succeeds, the key is injected into the child process environment and the original dotenvx command runs.
+
+When the gate is disabled, `touchenv` is just a passthrough.
+
+When not running on macOS, the Keychain path is skipped entirely.
+
+---
+
+## Configuration
+
+You can configure the Keychain service, account, and gate variable in `package.json`.
 
 ```jsonc
-"touchenv": { "service": "my-svc", "account": "DOTENV_PRIVATE_KEY", "gate": "USE_KEYCHAIN" }
+{
+  "touchenv": {
+    "service": "my-app-dotenv",
+    "account": "DOTENV_PRIVATE_KEY",
+    "gate": "USE_KEYCHAIN"
+  }
+}
 ```
+
+Most projects do not need this.
+
+By convention, `touchenv` uses:
+
+```text
+service: <package-name>-dotenv
+account: DOTENV_PRIVATE_KEY
+gate:    DOTENV_USE_KEYCHAIN
+```
+
+---
 
 ## CI and hosted builds
 
-No script changes are needed. Off macOS the Keychain path is skipped, so provide the key the standard dotenvx way by setting `DOTENV_PRIVATE_KEY` as a platform environment variable. The gate lives in `.env.local` (uncommitted), so CI never enables the Touch ID path and stays a passthrough.
+No script changes are required for CI.
+
+Because Keychain mode is normally enabled through `.env.local`, and `.env.local` should not be committed, CI will not enable Touch ID mode.
+
+In CI, provide the private key the normal dotenvx way:
+
+```text
+DOTENV_PRIVATE_KEY=...
+```
+
+On non-macOS systems, `touchenv` simply forwards to `dotenvx`, so Linux builds, Docker builds, and hosted deployments keep working normally.
+
+---
 
 ## JavaScript API
+
+`touchenv` also exposes a small Keychain API.
 
 ```js
 import { Keychain } from 'touchenv'
 
-const kc = new Keychain('my-app-dotenv', { account: 'API_KEY' })
+const kc = new Keychain('my-app-dotenv', {
+  account: 'API_KEY'
+})
 
-await kc.set('s3cret')     // Touch ID
-const v = await kc.get()   // Touch ID
-await kc.has()             // existence check, no prompt
-await kc.delete()          // remove, no prompt
+await kc.set('s3cret')       // Touch ID
+const value = await kc.get() // Touch ID
+await kc.has()               // no prompt
+await kc.delete()            // destructive
 ```
 
-`account` is set on the instance and can be overridden per call (`kc.get('OTHER')`). `get`/`set`/`delete` prompt for authentication; `has` does not. `delete` is destructive, so it accepts the device-password fallback in addition to Touch ID. A missing item rejects `get` with `err.code === 5`.
+The account can be set on the instance or overridden per call:
+
+```js
+await kc.get('OTHER_KEY')
+await kc.set('s3cret', 'OTHER_KEY')
+await kc.delete('OTHER_KEY')
+```
+
+`get`, `set`, and `delete` require authentication. `has` only checks whether an item exists and does not prompt.
+
+A missing item rejects with:
+
+```js
+err.code === 5
+```
+
+---
 
 ## Security model
 
-macOS does not let the built-in `security` CLI gate items on Touch ID; biometric items require the data-protection keychain, which needs a provisioning profile a bare CLI cannot embed. touchenv instead uses the legacy keychain with a trusted-application ACL. The signed helper creates the item, so only its code identity is trusted: other tools, including `security find-generic-password`, get a deny-able prompt rather than silent access, and the helper runs a `LocalAuthentication` check before reading. Items are stored `WhenUnlockedThisDeviceOnly` and never sync to iCloud.
+`touchenv` stores your `dotenvx` private key in the macOS Keychain and requires Touch ID before releasing it to `dotenvx`.
 
-This is user-presence protection, not an unbypassable vault. A process running as your user can invoke the helper and trigger a prompt you would have to approve, but it cannot read the secret silently, and the key is never written to a plaintext dotfile. For OS-enforced biometric access, use the data-protection keychain with a paid Developer Program account, or a vault such as 1Password's `op`.
+This is strong local user-presence protection, not a claim that the secret is impossible to extract from a compromised Mac. An attacker running arbitrary code as your user should not be able to read the key silently, but they may be able to invoke the helper and trigger an authentication prompt. Bypassing the protection should require compromising macOS, the Keychain security model, the helper, or tricking the user into approving access.
 
-The helper is code-signed so the Keychain can trust it. An auto-detected `Apple Development` certificate gives a stable identity, so "Always Allow" is approved once; ad-hoc signing also works but requires re-approval after the helper is recompiled. The build cache keys on source and identity, so one binary is reused across rebuilds and projects.
+`touchenv` protects the key at rest and gates local access before execution. It does not protect the key after it has been released to the process that needs it.
+
+To run `dotenvx`, the private key must eventually be passed to the child process environment as `DOTENV_PRIVATE_KEY`. Code running inside that process may be able to read it. That includes application code, dependencies, debuggers, crash reporters, logging code, or anything else that can inspect environment variables or process memory.
+
+In other words, `touchenv` prevents the key from living as a plaintext project file. It does not make secrets invisible to the application that is explicitly being given those secrets.
+
+This means:
+
+* the private key is not kept in `.env.keys`
+* the key is not silently readable by ordinary shell commands
+* access requires local user approval
+* the key remains local to the Mac
+* CI and non-macOS environments are unaffected
+* the running app can still access the environment variables it receives
+
+The built-in macOS `security` CLI cannot create Touch ID-gated generic password items. `touchenv` therefore uses a signed helper and a Keychain trusted-application ACL. With a stable Apple Development certificate, macOS can remember the helper identity and allow one-time approval. Ad-hoc signing also works, but may require re-approval after the helper is rebuilt.
+
+---
 
 ## License
 
